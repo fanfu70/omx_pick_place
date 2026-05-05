@@ -71,7 +71,7 @@ pip3 install opencv-python numpy tf-transformations
 ### 1. Clone This Repository
 
 ```bash
-cd ~ && git clone https://github.com/fengting70/omx_pick_place_ws.git
+cd ~ && git clone https://github.com/fengting70/omx_pick_place.git
 ```
 
 ### 2. Set Up the Workspace
@@ -80,11 +80,11 @@ Copy the package into your ROS 2 workspace:
 
 ```bash
 # Using your existing OM-X workspace
-cp -r omx_pick_place_ws ~/omx_ws/src/omx_pick_place
+cp -r omx_pick_place ~/omx_ws/src/omx_pick_place
 
 # Or create a dedicated workspace
 mkdir -p ~/pick_place_ws/src
-cp -r omx_pick_place_ws ~/pick_place_ws/src/omx_pick_place
+cp -r omx_pick_place ~/pick_place_ws/src/omx_pick_place
 ```
 
 ### 3. Build
