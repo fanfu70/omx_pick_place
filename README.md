@@ -29,17 +29,17 @@ A **ROS 2** pipeline for vision-guided pick-and-place operations using the [Open
 - **Robot Arm:** OpenManipulator-X (RM-X52-TNM) with DYNAMIXEL-X motors
 - **Camera:** Intel RealSense D435 (or D435i) depth camera
 - **Controller:** OpenCR board
-- **PC:** Ubuntu 22.04 + ROS 2 Humble
+- **PC:** Ubuntu 24.04 + ROS 2 Jazzy
 - **Calibration:** Printed ArUco marker (DICT_6X6_250, ID 0)
 
 ## Prerequisites
 
-### 1. ROS 2 Humble
+### 1. ROS 2 Jazzy
 
 ```bash
-sudo apt install ros-humble-desktop
+sudo apt install ros-jazzy-desktop
 sudo apt install python3-colcon-common-extensions
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -57,7 +57,7 @@ colcon build && source install/setup.bash
 ### 3. Intel RealSense ROS 2 Driver
 
 ```bash
-sudo apt install ros-humble-realsense2-camera
+sudo apt install ros-jazzy-realsense2-camera
 ```
 
 ### 4. Python Dependencies
