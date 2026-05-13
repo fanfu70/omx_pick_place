@@ -32,11 +32,11 @@ class CalibrationNode(Node):
         self.declare_parameter('marker_world_y', 0.0)
         self.declare_parameter('marker_world_z', 0.15) # Height above table
         
-        # Subscribers
+        # Subscribers (match the RealSense node name 'realsense' from launch file)
         self.image_sub = self.create_subscription(
-            Image, '/camera/color/image_raw', self.image_callback, 10)
+            Image, '/realsense/color/image_raw', self.image_callback, 10)
         self.info_sub = self.create_subscription(
-            CameraInfo, '/camera/color/camera_info', self.info_callback, 10)
+            CameraInfo, '/realsense/color/camera_info', self.info_callback, 10)
             
         self.camera_matrix = None
         self.dist_coeffs = None
@@ -121,7 +121,7 @@ class CalibrationNode(Node):
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = 'world'
-        t.child_frame_id = 'camera_color_optical_frame'
+        t.child_frame_id = 'realsense_color_optical_frame'
         
         t.transform.translation.x = float(t_world_cam[0])
         t.transform.translation.y = float(t_world_cam[1])

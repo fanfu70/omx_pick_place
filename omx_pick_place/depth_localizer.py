@@ -23,13 +23,13 @@ class DepthLocalizer(Node):
         # Publishers
         self.pose_pub = self.create_publisher(PoseStamped, '/object_pose', 10)
         
-        # Subscribers
+        # Subscribers (match the RealSense node name 'realsense' from launch file)
         self.centroid_sub = self.create_subscription(
             Pose2D, '/detected_object', self.centroid_callback, 10)
         self.depth_sub = self.create_subscription(
-            Image, '/camera/depth/image_rect_raw', self.depth_callback, 10)
+            Image, '/realsense/depth/image_rect_raw', self.depth_callback, 10)
         self.info_sub = self.create_subscription(
-            CameraInfo, '/camera/color/camera_info', self.info_callback, 10)
+            CameraInfo, '/realsense/color/camera_info', self.info_callback, 10)
             
         self.fx = None
         self.fy = None
@@ -74,7 +74,7 @@ class DepthLocalizer(Node):
         # Create PoseStamped
         pose = PoseStamped()
         pose.header.stamp = self.get_clock().now().to_msg()
-        pose.header.frame_id = self.depth_frame_id # Usually camera_depth_optical_frame
+        pose.header.frame_id = self.depth_frame_id # e.g. realsense_depth_optical_frame
         pose.pose.position.x = x
         pose.pose.position.y = y
         pose.pose.position.z = z

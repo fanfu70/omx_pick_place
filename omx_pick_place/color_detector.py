@@ -30,7 +30,7 @@ class ColorDetector(Node):
         
         # Subscriber
         self.image_sub = self.create_subscription(
-            Image, '/camera/color/image_raw', self.image_callback, 10)
+            Image, '/realsense/color/image_raw', self.image_callback, 10)
             
         self.get_logger().info(f"Color detector started. Looking for: {self.target_color}")
 
