@@ -62,23 +62,22 @@ class CalibrationNode(Node):
             return
 
         gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-
-        # New ArUco API (OpenCV 4.5+): ArucoDetector with DetectorParameters_create()
-        dictionary = aruco.DICT_6X6_250
-        parameters = aruco.DetectorParameters_create()
-        detector = aruco.ArucoDetector(dictionary, parameters)
-        corners, ids, rejected = detector.detectMarkers(gray)
-
+        
+        dictionary = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+        parameters = aruco.DetectorParameters()
+        
+        corners, ids, rejected = aruco.detectMarkers(gray, dictionary, parameters=parameters)
+        
         if ids is not None:
             target_id = self.get_parameter('aruco_marker_id').value
             if target_id in ids:
                 idx = np.where(ids == target_id)[0][0]
+                corner = corners[idx]
+                
                 marker_size = self.get_parameter('marker_size_m').value
-                # New estimatePoseMarkers API (plural, takes list of corners)
-                rvecs, tvecs, _ = aruco.estimatePoseMarkers(
-                    [corners[idx]], marker_size, self.camera_matrix, self.dist_coeffs)
-
-                self.broadcast_transform(rvecs[0], tvecs[0])
+                rvec, tvec, _ = aruco.estimatePoseSingleMarkers(corner, marker_size, self.camera_matrix, self.dist_coeffs)
+                
+                self.broadcast_transform(rvec[0], tvec[0])
                 self.calibrated = True
                 self.destroy_node() # Stop running after successful calibration
 
