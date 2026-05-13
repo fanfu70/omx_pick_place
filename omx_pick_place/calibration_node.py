@@ -64,7 +64,7 @@ class CalibrationNode(Node):
         gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
         
         dictionary = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
-        parameters = aruco.DetectorParameters()
+        parameters = aruco.DetectorParameters_create()
         
         corners, ids, rejected = aruco.detectMarkers(gray, dictionary, parameters=parameters)
         
