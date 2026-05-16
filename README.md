@@ -1,6 +1,6 @@
 # OpenManipulator-X: Vision-Guided Pick & Place
 
-A **ROS 2** pipeline for vision-guided pick-and-place operations using the [OpenManipulator-X (RM-X52-TNM)](https://emanual.robotis.com/docs/en/platform/openmanipulator_x/overview/) robot arm and an Intel RealSense D435 depth camera. The system detects colored objects in a camera image, localizes them in 3D space, and executes autonomous pick-and-place trajectories with MoveIt.
+A **ROS 2** pipeline for vision-guided pick-and-place operations using the [OpenManipulator-X (RM-X52-TNM)](https://emanual.robotis.com/docs/en/platform/openmanipulator_x/overview/) robot arm and an Intel RealSense D435 depth camera. The system detects colored objects in a camera image, localizes them in 3D space, and executes autonomous pick-and-place trajectories with **MoveIt 2**.
 
 ## System Architecture
 
