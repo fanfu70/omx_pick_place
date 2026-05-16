@@ -15,6 +15,7 @@ from tf2_ros import StaticTransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 import tf_transformations
 
+
 class CalibrationNode(Node):
     def __init__(self):
         super().__init__('calibration_node')
@@ -22,41 +23,51 @@ class CalibrationNode(Node):
         self.broadcaster = StaticTransformBroadcaster(self)
         
         # Configuration
-        self.declare_parameter('aruco_dict', 4) # DICT_6X6_250
+        self.declare_parameter('aruco_dict', 4)  # DICT_6X6_250
         self.declare_parameter('aruco_marker_id', 0)
-        self.declare_parameter('marker_size_m', 0.05) # Size of the marker in meters (adjust based on print)
-        
-        # Marker position relative to "world" frame (base_link). 
-        # You measure this once with a ruler. X forward, Y left, Z up.
+        self.declare_parameter('marker_size_m', 0.05)  # Size of the marker in meters
         self.declare_parameter('marker_world_x', 0.15)
         self.declare_parameter('marker_world_y', 0.0)
-        self.declare_parameter('marker_world_z', 0.15) # Height above table
-        
-        # Subscribers (match the RealSense node name 'realsense' from launch file)
-        self.image_sub = self.create_subscription(
-            Image, '/realsense/color/image_raw', self.image_callback, 10)
-        self.info_sub = self.create_subscription(
-            CameraInfo, '/realsense/color/camera_info', self.info_callback, 10)
-            
+        self.declare_parameter('marker_world_z', 0.15)  # Height above table
+        # Marker orientation in world frame (roll, pitch, yaw) - adjust for your setup
+        self.declare_parameter('marker_world_roll', 0.0)
+        self.declare_parameter('marker_world_pitch', 1.5708)  # 90 degrees - marker lying flat
+        self.declare_parameter('marker_world_yaw', 0.0)
+
         self.camera_matrix = None
         self.dist_coeffs = None
         self.calibrated = False
         
+        # Subscribers
+        self.image_sub = self.create_subscription(
+            Image, '/realsense/color/image_raw', self.image_callback, 10
+        )
+        self.info_sub = self.create_subscription(
+            CameraInfo, '/realsense/color/camera_info', self.info_callback, 10
+        )
+
         self.get_logger().info("Calibration node started. Show ArUco marker to camera to calibrate.")
 
     def info_callback(self, msg):
         self.camera_matrix = np.array(msg.k).reshape((3, 3))
         self.dist_coeffs = np.array(msg.d)
-        
+        self.get_logger().info("Camera info received. Intrinsics loaded.")
+
     def image_callback(self, msg):
         if self.calibrated:
             return
 
         if self.camera_matrix is None:
+            self.get_logger().debug("Waiting for camera info...")
             return
 
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # Handle different encodings
+            encoding = msg.encoding
+            if encoding in ['rgb8', 'bgr8']:
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            else:
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().error(f"Image conversion failed: {e}")
             return
@@ -75,45 +86,47 @@ class CalibrationNode(Node):
                 corner = corners[idx]
                 
                 marker_size = self.get_parameter('marker_size_m').value
-                rvec, tvec, _ = aruco.estimatePoseSingleMarkers(corner, marker_size, self.camera_matrix, self.dist_coeffs)
-                
+                rvec, tvec, _ = aruco.estimatePoseSingleMarkers(
+                    corner, marker_size, self.camera_matrix, self.dist_coeffs
+                )
+
                 self.broadcast_transform(rvec[0], tvec[0])
                 self.calibrated = True
-                self.destroy_node() # Stop running after successful calibration
+                self.get_logger().info("Calibration successful! Shutting down.")
+
+                # Clean shutdown instead of destroy_node() in callback
+                # Set a flag and let main() handle shutdown
 
     def broadcast_transform(self, rvec, tvec):
-        # We have the marker position in the camera frame (tvec) and rotation (rvec)
-        # We know the marker position in the world frame (from parameters)
-        # We want to find the transform: World -> Camera
-        
+        """Compute and broadcast World -> Camera transform."""
         # 1. Get Marker Pose in World frame
-        mx, my, mz = self.get_parameter('marker_world_x').value, self.get_parameter('marker_world_y').value, self.get_parameter('marker_world_z').value
-        # Assuming marker is upright on table (90 deg pitch) - adjust if needed
-        marker_world_quat = tf_transformations.quaternion_from_euler(0, 1.5708, 0) 
-        
+        mx = self.get_parameter('marker_world_x').value
+        my = self.get_parameter('marker_world_y').value
+        mz = self.get_parameter('marker_world_z').value
+
+        marker_roll = self.get_parameter('marker_world_roll').value
+        marker_pitch = self.get_parameter('marker_world_pitch').value
+        marker_yaw = self.get_parameter('marker_world_yaw').value
+
+        marker_world_quat = tf_transformations.quaternion_from_euler(
+            marker_roll, marker_pitch, marker_yaw
+        )
+
         # 2. Get Camera Pose relative to Marker
-        # rvec, tvec describes Marker relative to Camera.
-        # We want Camera relative to Marker.
         R_cam_marker = np.eye(3)
         cv2.Rodrigues(rvec, R_cam_marker)
         t_cam_marker = tvec.flatten()
-        
-        # Invert to get Marker in Camera frame -> Camera in Marker frame
+
+        # Invert to get Camera in Marker frame
         R_marker_cam = R_cam_marker.T
         t_marker_cam = -R_marker_cam @ t_cam_marker
-        q_marker_cam = tf_transformations.quaternion_from_matrix(np.eye(4)) # Placeholder
         q_marker_cam = tf_transformations.quaternion_from_rotation_matrix(R_marker_cam)
         
         # 3. Compose: World -> Marker -> Camera
-        # TransformStamped expects: parent_frame_id -> child_frame_id
-        # We want to publish: child_frame_id (camera) relative to parent_frame_id (world)
-        
-        # Combine Quaternions: q_world_cam = q_world_marker * q_marker_cam
         q_world_marker = marker_world_quat
         q_world_cam = tf_transformations.quaternion_multiply(q_world_marker, q_marker_cam)
-        
-        # Combine Translation: t_world_cam = t_world_marker + R_world_marker * t_marker_cam
-        R_world_marker = tf_transformations.rotation_matrix(1.5708, [0, 1, 0])[0:3, 0:3]
+
+        R_world_marker = tf_transformations.euler_matrix(marker_roll, marker_pitch, marker_yaw)[0:3, 0:3]
         t_world_marker = np.array([mx, my, mz])
         t_world_cam = t_world_marker + (R_world_marker @ t_marker_cam)
         
@@ -132,11 +145,20 @@ class CalibrationNode(Node):
         t.transform.rotation.w = float(q_world_cam[3])
         
         self.broadcaster.sendTransform(t)
-        self.get_logger().info(f"Calibration successful! Broadcasting World -> Camera transform.")
+        self.get_logger().info(f"Broadcasting World -> Camera transform.")
         self.get_logger().info(f"Translation: {t_world_cam}, Rotation (quat): {q_world_cam}")
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = CalibrationNode()
-    rclpy.spin(node)
-    rclpy.shutdown()
+    try:
+        # Spin until calibrated
+        while rclpy.ok() and not node.calibrated:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        node.get_logger().info("Calibration node shutting down.")
+    except KeyboardInterrupt:
+        node.get_logger().info("Interrupted by user.")
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
