@@ -26,9 +26,8 @@ class DepthLocalizer(Node):
         self.cx = None
         self.cy = None
         self.latest_depth = None
-        #self.depth_frame_id = 'camera_depth_optical_frame'  # Default, will be updated
-        self.depth_frame_id = 'realsense_color_optical_frame'
-    
+        self.depth_frame_id = 'camera_depth_optical_frame'  # Default, will be updated
+        
         # Configuration
         self.declare_parameter('depth_window_size', 5)  # Window for median filtering
         self.declare_parameter('max_depth', 3.0)  # Max valid depth in meters

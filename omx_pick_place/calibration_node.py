@@ -56,10 +56,15 @@ class CalibrationNode(Node):
         self.calibrated = False
         self.info_received = False
         
+        # Debug visualization flag
+        self.declare_parameter('debug_visualization', False)
+        self.debug_visualization = self.get_parameter('debug_visualization').value
+        
         # Output directory for visualization
         self.declare_parameter('output_dir', os.path.expanduser('~/calibration_results'))
         self.output_dir = self.get_parameter('output_dir').value
-        os.makedirs(self.output_dir, exist_ok=True)
+        if self.debug_visualization:
+            os.makedirs(self.output_dir, exist_ok=True)
         
         # Subscribers
         self.image_sub = self.create_subscription(
@@ -139,10 +144,8 @@ class CalibrationNode(Node):
                 
                 self.broadcast_transform(rvec_1[0], tvec_1[0], rvec_2[0], tvec_2[0], cv_image)
                 self.calibrated = True
-                self.get_logger().info("Calibration successful with both markers! Shutting down.")
+                self.get_logger().info("Calibration successful with both markers!")
 
-                # Clean shutdown instead of destroy_node() in callback
-                # Set a flag and let main() handle shutdown
             else:
                 detected = [int(i) for i in ids_flat]
                 self.get_logger().debug(f"Detected markers: {detected}, waiting for both {target_id_1} and {target_id_2}")
@@ -270,44 +273,50 @@ class CalibrationNode(Node):
         self.t_world_cam_fused = t_world_cam_fused
         self.R_world_cam_fused = R_world_cam_fused
         
-        # Compute marker poses in world frame for visualization
+        # Compute marker poses in world frame for visualization and TF broadcasting
         R_world_marker_1 = tf_transformations.euler_matrix(roll_1, pitch_1, yaw_1)[:3, :3]
         t_world_marker_1 = np.array([mx_1, my_1, mz_1])
         R_world_marker_2 = tf_transformations.euler_matrix(roll_2, pitch_2, yaw_2)[:3, :3]
         t_world_marker_2 = np.array([mx_2, my_2, mz_2])
         
-        # Generate visualization of all frames
-        self.visualize_poses(
-            t_world_cam_fused, R_world_cam_fused,
-            t_world_marker_1, R_world_marker_1, t_world_marker_2, R_world_marker_2
-        )
+        # Broadcast marker TFs: world -> marker1 and world -> marker2
+        self.broadcast_marker_tf('marker1', t_world_marker_1, R_world_marker_1)
+        self.broadcast_marker_tf('marker2', t_world_marker_2, R_world_marker_2)
         
-        # Generate visualization of World -> Marker 1
-        self.visualize_world_to_marker(t_world_marker_1, R_world_marker_1, "Marker 1")
-        
-        # Generate visualization of World -> Marker 2
-        self.visualize_world_to_marker(t_world_marker_2, R_world_marker_2, "Marker 2")
-        
-        # Generate visualization of Marker 1 -> Camera
-        R_cam_marker_1 = np.eye(3)
-        cv2.Rodrigues(rvec_1, R_cam_marker_1)
-        self.visualize_marker_to_camera(tvec_1.flatten(), R_cam_marker_1, "Marker 1")
-        
-        # Generate visualization of Marker 2 -> Camera
-        R_cam_marker_2 = np.eye(3)
-        cv2.Rodrigues(rvec_2, R_cam_marker_2)
-        self.visualize_marker_to_camera(tvec_2.flatten(), R_cam_marker_2, "Marker 2")
-        
-        # Generate visualization of World -> Camera (fused transform)
-        self.visualize_world_to_camera(t_world_cam_fused, R_world_cam_fused)
-        
-        # Generate camera image with overlaid both marker poses
-        if self.last_cv_image is not None:
-            self.visualize_camera_with_markers(
-                self.last_cv_image,
-                self.last_corner_1, self.last_rvec_1, self.last_tvec_1, "Marker 1",
-                self.last_corner_2, self.last_rvec_2, self.last_tvec_2, "Marker 2"
+        # Generate visualizations only if debug flag is enabled
+        if self.debug_visualization:
+            # Generate visualization of all frames
+            self.visualize_poses(
+                t_world_cam_fused, R_world_cam_fused,
+                t_world_marker_1, R_world_marker_1, t_world_marker_2, R_world_marker_2
             )
+            
+            # Generate visualization of World -> Marker 1
+            self.visualize_world_to_marker(t_world_marker_1, R_world_marker_1, "Marker 1")
+            
+            # Generate visualization of World -> Marker 2
+            self.visualize_world_to_marker(t_world_marker_2, R_world_marker_2, "Marker 2")
+            
+            # Generate visualization of Marker 1 -> Camera
+            R_cam_marker_1 = np.eye(3)
+            cv2.Rodrigues(rvec_1, R_cam_marker_1)
+            self.visualize_marker_to_camera(tvec_1.flatten(), R_cam_marker_1, "Marker 1")
+            
+            # Generate visualization of Marker 2 -> Camera
+            R_cam_marker_2 = np.eye(3)
+            cv2.Rodrigues(rvec_2, R_cam_marker_2)
+            self.visualize_marker_to_camera(tvec_2.flatten(), R_cam_marker_2, "Marker 2")
+            
+            # Generate visualization of World -> Camera (fused transform)
+            self.visualize_world_to_camera(t_world_cam_fused, R_world_cam_fused)
+            
+            # Generate camera image with overlaid both marker poses
+            if self.last_cv_image is not None:
+                self.visualize_camera_with_markers(
+                    self.last_cv_image,
+                    self.last_corner_1, self.last_rvec_1, self.last_tvec_1, "Marker 1",
+                    self.last_corner_2, self.last_rvec_2, self.last_tvec_2, "Marker 2"
+                )
 
     def visualize_poses(self, t_world_cam, R_world_cam, t_world_marker_1, R_world_marker_1, t_world_marker_2, R_world_marker_2):
         """Generate a 3D visualization of World, Camera, and both Marker frames."""
@@ -910,6 +919,30 @@ class CalibrationNode(Node):
         # Convert back to rotation matrix
         R_avg = tf_transformations.quaternion_matrix(q_avg)[:3, :3]
         return R_avg
+
+    def broadcast_marker_tf(self, marker_frame_id, t_world_marker, R_world_marker):
+        """Broadcast static transform from world to marker frame."""
+        # Compute quaternion from rotation matrix
+        T_marker = np.eye(4)
+        T_marker[:3, :3] = R_world_marker
+        q_world_marker = tf_transformations.quaternion_from_matrix(T_marker)
+        
+        # Create and broadcast transform
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'world'
+        t.child_frame_id = marker_frame_id
+        
+        t.transform.translation.x = float(t_world_marker[0])
+        t.transform.translation.y = float(t_world_marker[1])
+        t.transform.translation.z = float(t_world_marker[2])
+        t.transform.rotation.x = float(q_world_marker[0])
+        t.transform.rotation.y = float(q_world_marker[1])
+        t.transform.rotation.z = float(q_world_marker[2])
+        t.transform.rotation.w = float(q_world_marker[3])
+        
+        self.broadcaster.sendTransform(t)
+        self.get_logger().info(f"Broadcasting World -> {marker_frame_id} transform.")
 
     def plot_frame_with_label(self, ax, origin, rotation_matrix, label, axis_length=0.1):
         """Plot a coordinate frame with text label at the given origin."""
