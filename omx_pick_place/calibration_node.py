@@ -11,7 +11,7 @@ from cv_bridge import CvBridge
 import cv2
 import cv2.aruco as aruco
 import numpy as np
-from tf2_ros import StaticTransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster, Buffer, TransformListener
 from geometry_msgs.msg import TransformStamped
 import tf_transformations
 import matplotlib
@@ -26,6 +26,8 @@ class CalibrationNode(Node):
         super().__init__('calibration_node')
         self.bridge = CvBridge()
         self.broadcaster = StaticTransformBroadcaster(self)
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         
         # Configuration
         self.declare_parameter('aruco_dict', 4)  # DICT_6X6_250
@@ -52,6 +54,7 @@ class CalibrationNode(Node):
         self.camera_matrix = None
         self.dist_coeffs = None
         self.calibrated = False
+        self.info_received = False
         
         # Output directory for visualization
         self.declare_parameter('output_dir', os.path.expanduser('~/calibration_results'))
@@ -69,8 +72,12 @@ class CalibrationNode(Node):
         self.get_logger().info("Calibration node started. Show ArUco marker to camera to calibrate.")
 
     def info_callback(self, msg):
+        if self.info_received:
+            return
+
         self.camera_matrix = np.array(msg.k).reshape((3, 3))
         self.dist_coeffs = np.array(msg.d)
+        self.info_received = True
         self.get_logger().info("Camera info received. Intrinsics loaded.")
 
     def image_callback(self, msg):
@@ -186,23 +193,74 @@ class CalibrationNode(Node):
         self.get_logger().info(f"Marker 2 -> Camera: T={t_world_cam_2}")
         self.get_logger().info(f"Fused Camera: T={t_world_cam_fused}")
         
-        # Broadcast fused transform
+        # Build world -> camera_color_optical_frame transform
+        T_world_to_optical = np.eye(4)
+        T_world_to_optical[:3, :3] = R_world_cam_fused
+        T_world_to_optical[:3, 3] = t_world_cam_fused
+        
+        # Look up camera_color_optical_frame -> camera_link
+        try:
+            import rclpy
+            # Wait up to 2 seconds for the transform
+            msg = self.tf_buffer.lookup_transform(
+                'camera_link',
+                'camera_color_optical_frame',
+                rclpy.time.Time(),
+                rclpy.duration.Duration(seconds=2.0)
+            )
+            
+            # Extract transform as matrix
+            t_optical_to_link = np.array([
+                msg.transform.translation.x,
+                msg.transform.translation.y,
+                msg.transform.translation.z
+            ])
+            q_optical_to_link = np.array([
+                msg.transform.rotation.x,
+                msg.transform.rotation.y,
+                msg.transform.rotation.z,
+                msg.transform.rotation.w
+            ])
+            R_optical_to_link = tf_transformations.quaternion_matrix(q_optical_to_link)[:3, :3]
+            
+            T_optical_to_link = np.eye(4)
+            T_optical_to_link[:3, :3] = R_optical_to_link
+            T_optical_to_link[:3, 3] = t_optical_to_link
+            
+            # Compose: world -> camera_link = optical -> camera_link * world -> optical
+            T_world_to_link = T_optical_to_link @ T_world_to_optical
+            
+            t_world_link = T_world_to_link[:3, 3]
+            R_world_link = T_world_to_link[:3, :3]
+            q_world_link = tf_transformations.quaternion_from_matrix(T_world_to_link)
+            
+            self.get_logger().info(f"Found transform: camera_color_optical_frame -> camera_link")
+            self.get_logger().info(f"Composed world -> camera_link: T={t_world_link}")
+            
+        except Exception as e:
+            self.get_logger().warn(f"Could not lookup transform to camera_link: {e}")
+            self.get_logger().warn("Falling back to broadcasting world -> camera_color_optical_frame")
+            t_world_link = t_world_cam_fused
+            R_world_link = R_world_cam_fused
+            q_world_link = q_world_cam_fused
+        
+        # Broadcast world -> camera_link transform
         t = TransformStamped()
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = 'world'
-        t.child_frame_id = 'realsense_color_optical_frame'
+        t.child_frame_id = 'camera_link'
         
-        t.transform.translation.x = float(t_world_cam_fused[0])
-        t.transform.translation.y = float(t_world_cam_fused[1])
-        t.transform.translation.z = float(t_world_cam_fused[2])
-        t.transform.rotation.x = float(q_world_cam_fused[0])
-        t.transform.rotation.y = float(q_world_cam_fused[1])
-        t.transform.rotation.z = float(q_world_cam_fused[2])
-        t.transform.rotation.w = float(q_world_cam_fused[3])
+        t.transform.translation.x = float(t_world_link[0])
+        t.transform.translation.y = float(t_world_link[1])
+        t.transform.translation.z = float(t_world_link[2])
+        t.transform.rotation.x = float(q_world_link[0])
+        t.transform.rotation.y = float(q_world_link[1])
+        t.transform.rotation.z = float(q_world_link[2])
+        t.transform.rotation.w = float(q_world_link[3])
         
         self.broadcaster.sendTransform(t)
-        self.get_logger().info(f"Broadcasting fused World -> Camera transform.")
-        self.get_logger().info(f"Translation: {t_world_cam_fused}, Rotation (quat): {q_world_cam_fused}")
+        self.get_logger().info(f"Broadcasting fused World -> camera_link transform.")
+        self.get_logger().info(f"Translation: {t_world_link}, Rotation (quat): {q_world_link}")
         
         # Store individual poses for visualization
         self.t_world_cam_1 = t_world_cam_1
@@ -901,10 +959,9 @@ def main(args=None):
     rclpy.init(args=args)
     node = CalibrationNode()
     try:
-        # Spin until calibrated
-        while rclpy.ok() and not node.calibrated:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        node.get_logger().info("Calibration node shutting down.")
+        # Keep Spin in order to broadcast TF frames continuously
+        # and allow for graceful shutdown on Ctrl+C
+        rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("Interrupted by user.")
     finally:

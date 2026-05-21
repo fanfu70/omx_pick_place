@@ -36,10 +36,11 @@ class ColorDetector(Node):
         # Publishers
         self.centroid_pub = self.create_publisher(Pose2D, '/detected_object', 10)
         self.marker_pub = self.create_publisher(Marker, '/detection_marker', 10)
+        self.annotated_image_pub = self.create_publisher(Image, '/color_detector/annotated_image', 10)
         
         # Subscriber
         self.image_sub = self.create_subscription(
-            Image, '/realsense/color/image_raw', self.image_callback, 10
+            Image, '/camera/camera/color/image_raw', self.image_callback, 10
         )
 
         self.get_logger().info(f"Color detector started. Looking for: {self.target_color}")
@@ -50,6 +51,9 @@ class ColorDetector(Node):
         except Exception as e:
             self.get_logger().error(f"Image conversion failed: {e}")
             return
+
+        # Make a copy for annotation
+        annotated_image = cv_image.copy()
 
         # 1. Convert to HSV
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
@@ -66,14 +70,21 @@ class ColorDetector(Node):
         if centroid is None:
             # Remove old marker if no detection
             self._publish_empty_marker(msg.header.frame_id)
+            # Still publish annotated image (without detection)
+            self._publish_annotated_image(annotated_image, msg.header)
             return
 
         u, v = centroid
 
-        # Rate limiting
+        # Draw detection on annotated image
+        self._draw_detection(annotated_image, u, v)
+
+        # Rate limiting for centroid/marker publishing
         current_time = self.get_clock().now()
         time_since_last = (current_time - self.last_pub_time).nanoseconds / 1e9
         if time_since_last < self.min_pub_interval:
+            # Still publish annotated image every frame
+            self._publish_annotated_image(annotated_image, msg.header)
             return
 
         self.last_pub_time = current_time
@@ -88,7 +99,60 @@ class ColorDetector(Node):
         marker = self._create_2d_marker(u, v, msg.header.frame_id)
         self.marker_pub.publish(marker)
 
+        # Publish annotated image
+        self._publish_annotated_image(annotated_image, msg.header)
+
         self.get_logger().debug(f"Detected object at pixel ({u}, {v})")
+
+    def _draw_detection(self, image, u, v):
+        """Draw detection results on the image."""
+        u, v = int(u), int(v)
+        
+        # Draw crosshair
+        crosshair_length = 30
+        crosshair_thickness = 2
+        color = (0, 255, 0)  # Green in BGR
+        
+        # Horizontal line
+        cv2.line(image, (u - crosshair_length, v), (u + crosshair_length, v), color, crosshair_thickness)
+        # Vertical line
+        cv2.line(image, (u, v - crosshair_length), (u, v + crosshair_length), color, crosshair_thickness)
+        
+        # Draw circle around detection
+        circle_radius = 20
+        cv2.circle(image, (u, v), circle_radius, color, 2)
+        
+        # Draw filled center dot
+        cv2.circle(image, (u, v), 5, (0, 0, 255), -1)  # Red dot in BGR
+        
+        # Draw text with coordinates
+        text = f"({u}, {v})"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        font_thickness = 2
+        
+        # Get text size for background rectangle
+        (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+        
+        # Draw background rectangle
+        rect_x = u + 10
+        rect_y = v - 30
+        cv2.rectangle(image, 
+                     (rect_x - 5, rect_y - text_height - 5), 
+                     (rect_x + text_width + 5, rect_y + baseline + 5), 
+                     (0, 0, 0), -1)
+        
+        # Draw text
+        cv2.putText(image, text, (rect_x, rect_y), font, font_scale, color, font_thickness)
+
+    def _publish_annotated_image(self, cv_image, header):
+        """Publish the annotated camera image."""
+        try:
+            image_msg = self.bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
+            image_msg.header = header
+            self.annotated_image_pub.publish(image_msg)
+        except Exception as e:
+            self.get_logger().error(f"Failed to publish annotated image: {e}")
 
     def _create_2d_marker(self, u: int, v: int, frame_id: str) -> Marker:
         """Create a 2D marker for visualization in RViz."""
@@ -97,7 +161,7 @@ class ColorDetector(Node):
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = "detection"
         marker.id = 0
-        marker.type = Marker.CIRCLE
+        marker.type = Marker.SPHERE
         marker.action = Marker.ADD
         marker.pose.position.x = float(u)
         marker.pose.position.y = float(v)

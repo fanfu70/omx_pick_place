@@ -21,6 +21,14 @@ class DepthLocalizer(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
+        self.fx = None
+        self.fy = None
+        self.cx = None
+        self.cy = None
+        self.latest_depth = None
+        #self.depth_frame_id = 'camera_depth_optical_frame'  # Default, will be updated
+        self.depth_frame_id = 'realsense_color_optical_frame'
+    
         # Configuration
         self.declare_parameter('depth_window_size', 5)  # Window for median filtering
         self.declare_parameter('max_depth', 3.0)  # Max valid depth in meters
@@ -35,22 +43,18 @@ class DepthLocalizer(Node):
             Pose2D, '/detected_object', self.centroid_callback, 10
         )
         self.depth_sub = self.create_subscription(
-            Image, '/realsense/depth/image_rect_raw', self.depth_callback, 10
+            Image, '/camera/camera/aligned_depth_to_color/image_raw', self.depth_callback, 10
         )
         self.info_sub = self.create_subscription(
-            CameraInfo, '/realsense/color/camera_info', self.info_callback, 10
+            CameraInfo, '/camera/camera/aligned_depth_to_color/camera_info', self.info_callback, 10
         )
 
-        self.fx = None
-        self.fy = None
-        self.cx = None
-        self.cy = None
-        self.latest_depth = None
-        self.depth_frame_id = 'camera_depth_optical_frame'  # Default, will be updated
 
         self.get_logger().info("Depth localizer started.")
 
     def info_callback(self, msg):
+        if self.fx is not None:
+            return
         # Camera intrinsics from K matrix
         self.fx = msg.k[0]
         self.fy = msg.k[4]
@@ -59,6 +63,9 @@ class DepthLocalizer(Node):
         self.get_logger().info(f"Camera intrinsics loaded: fx={self.fx}, fy={self.fy}")
 
     def depth_callback(self, msg):
+        if self.latest_depth is not None:
+           return
+        self.get_logger().info("Depth image received.")
         self.latest_depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         self.depth_frame_id = msg.header.frame_id
 
@@ -87,7 +94,7 @@ class DepthLocalizer(Node):
             return None
         
         # Take median for robustness
-        median_depth = np.median(valid_depths)
+        median_depth = np.median(valid_depths)*0.001
         
         # Validate depth range
         if median_depth > self.max_depth:
@@ -97,23 +104,24 @@ class DepthLocalizer(Node):
 
     def centroid_callback(self, msg):
         if self.fx is None or self.latest_depth is None:
-            self.get_logger().debug("Waiting for camera info and depth image...")
+            self.get_logger().info("Waiting for camera info and depth image...")
             return
-            
+        
+        self.get_logger().info(f"Received centroid: x={msg.x}, y={msg.y}")
         u = int(msg.x)
         v = int(msg.y)
 
         # Validate pixel coordinates
         h, w = self.latest_depth.shape
         if u < 0 or u >= w or v < 0 or v >= h:
-            self.get_logger().warn(f"Centroid ({u}, {v}) outside image bounds ({w}x{h})")
+            self.get_logger().info(f"Centroid ({u}, {v}) outside image bounds ({w}x{h})")
             return
 
         # Get filtered depth value (in meters)
         depth_m = self.get_median_depth(u, v, self.latest_depth)
         
         if depth_m is None:
-            self.get_logger().debug(f"No valid depth at ({u}, {v})")
+            self.get_logger().info(f"No valid depth at ({u}, {v})")
             return
             
         z = depth_m
@@ -137,7 +145,7 @@ class DepthLocalizer(Node):
                 pose, 'world', timeout=rclpy.duration.Duration(seconds=1.0)
             )
             self.pose_pub.publish(transformed_pose)
-            self.get_logger().debug(f"Published object pose in world: x={x:.3f}, y={y:.3f}, z={z:.3f}")
+            self.get_logger().info(f"Published object pose in world: x={x:.3f}, y={y:.3f}, z={z:.3f}")
         except tf2_ros.Exception as e:
             self.get_logger().warn(f"TF Transform failed: {e}")
 
