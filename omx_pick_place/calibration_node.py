@@ -747,10 +747,6 @@ class CalibrationNode(Node):
         output_path = os.path.join(self.output_dir, 'camera_with_marker_pose.png')
         cv2.imwrite(output_path, img_overlay)
         
-        # Save the image
-        output_path = os.path.join(self.output_dir, 'camera_with_marker_pose.png')
-        cv2.imwrite(output_path, img_overlay)
-        
         self.get_logger().info(f"Camera image with marker pose saved to: {output_path}")
 
     def visualize_camera_with_markers(self, cv_image, corner_1, rvec_1, tvec_1, name_1, 
@@ -969,24 +965,6 @@ class CalibrationNode(Node):
         
         # Print pose info to log
         self.get_logger().info(f"{label} frame position: [{origin[0]:.3f}, {origin[1]:.3f}, {origin[2]:.3f}]")
-
-    def plot_frame(self, ax, origin, rotation_matrix, label, color='black', axis_length=0.1):
-        """Plot a coordinate frame at the given origin with the given orientation."""
-        # X axis (red)
-        x_end = origin + axis_length * rotation_matrix[:, 0]
-        ax.plot([origin[0], x_end[0]], [origin[1], x_end[1]], [origin[2], x_end[2]], 
-                'r-', linewidth=2, label=f'{label} X' if label else 'X')
-        
-        # Y axis (green)
-        y_end = origin + axis_length * rotation_matrix[:, 1]
-        ax.plot([origin[0], y_end[0]], [origin[1], y_end[1]], [origin[2], y_end[2]], 
-                'g-', linewidth=2, label=f'{label} Y' if label else 'Y')
-        
-        # Z axis (blue)
-        z_end = origin + axis_length * rotation_matrix[:, 2]
-        ax.plot([origin[0], z_end[0]], [origin[1], z_end[1]], [origin[2], z_end[2]], 
-                'b-', linewidth=2, label=f'{label} Z' if label else 'Z')
-
 
 def main(args=None):
     rclpy.init(args=args)

@@ -297,6 +297,11 @@ class PickPlaceNode(Node):
         except Exception as e:
             self.get_logger().error(f"Exception during pick-and-place: {e}")
         finally:
+            # Safety: ensure gripper is open if something went wrong while grasping
+            if self.is_grasping:
+                self.get_logger().warn("Error occurred while grasping — opening gripper for safety.")
+                self.control_gripper(0.0)
+            self.is_grasping = False
             self.busy = False
 
 
