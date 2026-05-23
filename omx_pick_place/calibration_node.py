@@ -40,7 +40,7 @@ class CalibrationNode(Node):
         self.declare_parameter('marker1_world_y', 0.0)
         self.declare_parameter('marker1_world_z', 0.15)  # Height above table
         self.declare_parameter('marker1_world_roll', 0.0)
-        self.declare_parameter('marker1_world_pitch', 1.5708)  # 90 degrees - marker lying flat
+        self.declare_parameter('marker1_world_pitch', 0.0)   # 0 degrees - marker face up (Z aligned with world Z up)
         self.declare_parameter('marker1_world_yaw', 0.0)
         
         # Marker 2 position and orientation in world frame
@@ -48,7 +48,7 @@ class CalibrationNode(Node):
         self.declare_parameter('marker2_world_y', 0.0)
         self.declare_parameter('marker2_world_z', 0.15)  # Height above table
         self.declare_parameter('marker2_world_roll', 0.0)
-        self.declare_parameter('marker2_world_pitch', 1.5708)  # 90 degrees - marker lying flat
+        self.declare_parameter('marker2_world_pitch', 0.0)   # 0 degrees - marker face up (Z aligned with world Z up)
         self.declare_parameter('marker2_world_yaw', 0.0)
 
         self.camera_matrix = None
@@ -213,25 +213,31 @@ class CalibrationNode(Node):
             )
             
             # Extract transform as matrix
-            t_optical_to_link = np.array([
+            # lookup_transform('camera_link', 'camera_color_optical_frame') returns
+            # T_link_optical: transforms points from optical frame to camera_link frame
+            t_link_optical = np.array([
                 msg.transform.translation.x,
                 msg.transform.translation.y,
                 msg.transform.translation.z
             ])
-            q_optical_to_link = np.array([
+            q_link_optical = np.array([
                 msg.transform.rotation.x,
                 msg.transform.rotation.y,
                 msg.transform.rotation.z,
                 msg.transform.rotation.w
             ])
-            R_optical_to_link = tf_transformations.quaternion_matrix(q_optical_to_link)[:3, :3]
+            R_link_optical = tf_transformations.quaternion_matrix(q_link_optical)[:3, :3]
             
-            T_optical_to_link = np.eye(4)
-            T_optical_to_link[:3, :3] = R_optical_to_link
-            T_optical_to_link[:3, 3] = t_optical_to_link
+            T_link_optical = np.eye(4)
+            T_link_optical[:3, :3] = R_link_optical
+            T_link_optical[:3, 3] = t_link_optical
             
-            # Compose: world -> camera_link = optical -> camera_link * world -> optical
-            T_world_to_link = T_optical_to_link @ T_world_to_optical
+            # TF chain: world -> camera_link -> camera_color_optical_frame
+            # T_world_optical = T_world_link @ T_link_optical
+            # We have T_world_optical (from ArUco) and T_link_optical (looked up)
+            # Solve for T_world_link: T_world_link = T_world_optical @ inv(T_link_optical)
+            T_optical_link = np.linalg.inv(T_link_optical)
+            T_world_to_link = T_world_to_optical @ T_optical_link
             
             t_world_link = T_world_to_link[:3, 3]
             R_world_link = T_world_to_link[:3, :3]
@@ -882,7 +888,11 @@ class CalibrationNode(Node):
         t_world_marker = np.array([mx, my, mz])
         
         # Compose: World -> Marker -> Camera
-        R_world_cam = R_world_marker @ R_cam_marker
+        # ArUco rvec/tvec give marker pose IN camera frame
+        # R_cam_marker rotates FROM camera axes TO marker axes
+        # So R_marker_cam = R_cam_marker.T rotates FROM marker axes TO camera axes
+        # Camera pose in world = R_world_marker @ R_marker_cam
+        R_world_cam = R_world_marker @ R_marker_cam
         t_world_cam = t_world_marker + (R_world_marker @ t_marker_cam)
         
         self.get_logger().info(f"{marker_name} - Camera in World: T={t_world_cam}")

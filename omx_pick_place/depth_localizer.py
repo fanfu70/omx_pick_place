@@ -26,7 +26,7 @@ class DepthLocalizer(Node):
         self.cx = None
         self.cy = None
         self.latest_depth = None
-        self.depth_frame_id = 'camera_depth_optical_frame'  # Default, will be updated
+        self.depth_frame_id = 'camera_color_optical_frame'  # Default, will be updated
         
         # Configuration
         self.declare_parameter('depth_window_size', 5)  # Window for median filtering
@@ -140,11 +140,19 @@ class DepthLocalizer(Node):
         
         # Transform to 'world' frame using TF2
         try:
+            self.get_logger().info(
+                f"Object pose in {self.depth_frame_id}: x={x:.3f}, y={y:.3f}, z={z:.3f}"
+            )
             transformed_pose = self.tf_buffer.transform(
                 pose, 'world', timeout=rclpy.duration.Duration(seconds=1.0)
             )
             self.pose_pub.publish(transformed_pose)
-            self.get_logger().info(f"Published object pose in world: x={x:.3f}, y={y:.3f}, z={z:.3f}")
+            self.get_logger().info(
+                f"Published object pose in world: "
+                f"x={transformed_pose.pose.position.x:.3f}, "
+                f"y={transformed_pose.pose.position.y:.3f}, "
+                f"z={transformed_pose.pose.position.z:.3f}"
+            )
         except tf2_ros.Exception as e:
             self.get_logger().warn(f"TF Transform failed: {e}")
 

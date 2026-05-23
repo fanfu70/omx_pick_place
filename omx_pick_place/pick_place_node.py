@@ -29,9 +29,9 @@ class PickPlaceNode(Node):
         self.declare_parameter('approach_dist', 0.15)
         self.declare_parameter('lift_dist', 0.20)
         self.declare_parameter('grasp_depth', 0.02)
-        self.declare_parameter('place_x', -0.3)
-        self.declare_parameter('place_y', 0.0)
-        self.declare_parameter('place_z', 0.20)
+        self.declare_parameter('place_x', float('nan'))
+        self.declare_parameter('place_y', float('nan'))
+        self.declare_parameter('place_z', float('nan'))
         self.declare_parameter('arm_group_name', 'arm')
         self.declare_parameter('gripper_action_name', '/gripper_controller/gripper_cmd')
         self.declare_parameter('planning_frame', 'base_link')
@@ -230,9 +230,28 @@ class PickPlaceNode(Node):
 
     def execute_pick_and_place(self, obj_x: float, obj_y: float, obj_z: float):
         """Execute the full pick-and-place sequence."""
-        place_x = self.get_parameter('place_x').value
-        place_y = self.get_parameter('place_y').value
-        place_z = self.get_parameter('place_z').value
+        raw_place_x = self.get_parameter('place_x').value
+        raw_place_y = self.get_parameter('place_y').value
+        raw_place_z = self.get_parameter('place_z').value
+
+        # If place parameters not provided, default to object pose
+        if math.isnan(raw_place_x):
+            place_x = obj_x
+            self.get_logger().info(f"place_x not provided, defaulting to object pose.x: {place_x:.3f}")
+        else:
+            place_x = raw_place_x
+
+        if math.isnan(raw_place_y):
+            place_y = -obj_y
+            self.get_logger().info(f"place_y not provided, defaulting to -object pose.y: {place_y:.3f}")
+        else:
+            place_y = raw_place_y
+
+        if math.isnan(raw_place_z):
+            place_z = obj_z
+            self.get_logger().info(f"place_z not provided, defaulting to object pose.z: {place_z:.3f}")
+        else:
+            place_z = raw_place_z
 
         try:
             # 1. Pre-grasp (above object)
