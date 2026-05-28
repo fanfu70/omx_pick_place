@@ -36,11 +36,10 @@ class PickPlaceStep(enum.Enum):
     STEP6_LIFT = 6
     STEP7_MOVE_TO_PLACE = 7
     STEP8_RELEASE = 8
-    STEP9_RETREAT = 9
-    STEP10_GO_HOME = 10
-    STEP11_CLOSE_GRIPPER = 11
-    DONE = 12
-    ERROR = 13
+    STEP9_GO_HOME = 9
+    STEP10_CLOSE_GRIPPER = 10
+    DONE = 11
+    ERROR = 12
 
 
 class PickPlaceStateMachine:
@@ -128,9 +127,8 @@ class PickPlaceStateMachine:
                     PickPlaceStep.STEP6_LIFT: (6, self._step6_lift),
                     PickPlaceStep.STEP7_MOVE_TO_PLACE: (7, self._step7_move_to_place),
                     PickPlaceStep.STEP8_RELEASE: (8, self._step8_release),
-                    PickPlaceStep.STEP9_RETREAT: (9, self._step9_retreat),
-                    PickPlaceStep.STEP10_GO_HOME: (10, self._step10_go_home),
-                    PickPlaceStep.STEP11_CLOSE_GRIPPER: (11, self._step11_close_gripper),
+                    PickPlaceStep.STEP9_GO_HOME: (9, self._step9_go_home),
+                    PickPlaceStep.STEP10_CLOSE_GRIPPER: (10, self._step10_close_gripper),
                 }
 
                 if current_state in step_map:
@@ -141,6 +139,11 @@ class PickPlaceStateMachine:
                             if success:
                                 self.state = self._next_state(current_state)
                             else:
+                                self.node.get_logger().error(f"Step {step_idx} failed! Attempting recovery: return to home and close gripper...")
+                                # Recovery: go home (same as STEP_9) and close gripper (same as STEP_10)
+                                home = self.node.make_pose((self.node.home_x, self.node.home_y, self.node.home_z))
+                                self.node.move_to_pose(home)
+                                self.node.control_gripper(-0.01)
                                 self.state = PickPlaceStep.ERROR
                     else:
                         # Skip this step
@@ -238,21 +241,15 @@ class PickPlaceStateMachine:
             self.is_grasping = False
         return success
 
-    def _step9_retreat(self) -> bool:
-        """Step 9: Retreat."""
-        self.node.get_logger().info("Step 9: Retreating...")
-        retreat = self.node.make_pose((self.place_x, self.place_y, self.place_z + self.node.retreat_dist))
-        return self.node.move_to_pose(retreat)
-
-    def _step10_go_home(self) -> bool:
-        """Step 10: Return to home position."""
-        self.node.get_logger().info("Step 10: Returning to home position...")
+    def _step9_go_home(self) -> bool:
+        """Step 9: Return to home position."""
+        self.node.get_logger().info("Step 9: Returning to home position...")
         home = self.node.make_pose((self.node.home_x, self.node.home_y, self.node.home_z))
         return self.node.move_to_pose(home)
 
-    def _step11_close_gripper(self) -> bool:
-        """Step 11: Close gripper."""
-        self.node.get_logger().info("Step 11: Closing gripper...")
+    def _step10_close_gripper(self) -> bool:
+        """Step 10: Close gripper."""
+        self.node.get_logger().info("Step 10: Closing gripper...")
         success = self.node.control_gripper(-0.01)
         # with self.lock:
         #     self.is_grasping = True
@@ -331,11 +328,11 @@ class PickPlaceNode(Node):
         self.max_retries = self.get_parameter('max_retries').value
         self.relax_constraints_on_retry = self.get_parameter('relax_constraints_on_retry').value
 
-        # max_steps: 0 means run all 11 steps
+        # max_steps: 0 means run all 10 steps
         self.max_steps = self.get_parameter('max_steps').value
-        if self.max_steps <= 0 or self.max_steps > 11:
-            self.max_steps = 11
-            self.get_logger().info('max_steps not set or invalid, defaulting to all 11 steps')
+        if self.max_steps <= 0 or self.max_steps > 10:
+            self.max_steps = 10
+            self.get_logger().info('max_steps not set or invalid, defaulting to all 10 steps')
         else:
             self.get_logger().info(f'max_steps set to {self.max_steps}')
 
