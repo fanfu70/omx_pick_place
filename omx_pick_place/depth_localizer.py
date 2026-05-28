@@ -153,7 +153,7 @@ class DepthLocalizer(Node):
                 f"y={transformed_pose.pose.position.y:.3f}, "
                 f"z={transformed_pose.pose.position.z:.3f}"
             )
-        except tf2_ros.Exception as e:
+        except tf2_ros.TransformException as e:
             self.get_logger().warn(f"TF Transform failed: {e}")
 
 

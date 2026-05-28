@@ -75,6 +75,9 @@ class ColorDetector(Node):
             return
 
         u, v = centroid
+        # Adjust for crosshair offset (if needed)
+        u -= 15
+        v -= 20
 
         # Draw detection on annotated image
         self._draw_detection(annotated_image, u, v)

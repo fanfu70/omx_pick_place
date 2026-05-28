@@ -37,8 +37,10 @@ class PickPlaceStep(enum.Enum):
     STEP7_MOVE_TO_PLACE = 7
     STEP8_RELEASE = 8
     STEP9_RETREAT = 9
-    DONE = 10
-    ERROR = 11
+    STEP10_GO_HOME = 10
+    STEP11_CLOSE_GRIPPER = 11
+    DONE = 12
+    ERROR = 13
 
 
 class PickPlaceStateMachine:
@@ -127,6 +129,8 @@ class PickPlaceStateMachine:
                     PickPlaceStep.STEP7_MOVE_TO_PLACE: (7, self._step7_move_to_place),
                     PickPlaceStep.STEP8_RELEASE: (8, self._step8_release),
                     PickPlaceStep.STEP9_RETREAT: (9, self._step9_retreat),
+                    PickPlaceStep.STEP10_GO_HOME: (10, self._step10_go_home),
+                    PickPlaceStep.STEP11_CLOSE_GRIPPER: (11, self._step11_close_gripper),
                 }
 
                 if current_state in step_map:
@@ -165,7 +169,7 @@ class PickPlaceStateMachine:
                 if self.is_grasping:
                     self.node.get_logger().warn("Error occurred while grasping — opening gripper for safety.")
                     try:
-                        self.node.control_gripper(0.0)
+                        self.node.control_gripper(0.019)
                     except Exception:
                         self.node.get_logger().error("Failed to open gripper during safety cleanup")
                     self.is_grasping = False
@@ -189,7 +193,7 @@ class PickPlaceStateMachine:
     def _step2_open_gripper(self) -> bool:
         """Step 2: Open gripper."""
         self.node.get_logger().info("Step 2: Opening gripper...")
-        success = self.node.control_gripper(0.0)
+        success = self.node.control_gripper(0.019)
         with self.lock:
             self.is_grasping = False
         return success
@@ -209,7 +213,7 @@ class PickPlaceStateMachine:
     def _step5_close_gripper(self) -> bool:
         """Step 5: Close gripper."""
         self.node.get_logger().info("Step 5: Closing gripper...")
-        success = self.node.control_gripper(1.0)
+        success = self.node.control_gripper(-0.01)
         with self.lock:
             self.is_grasping = True
         return success
@@ -229,7 +233,7 @@ class PickPlaceStateMachine:
     def _step8_release(self) -> bool:
         """Step 8: Release object."""
         self.node.get_logger().info("Step 8: Releasing object...")
-        success = self.node.control_gripper(0.0)
+        success = self.node.control_gripper(0.019)
         with self.lock:
             self.is_grasping = False
         return success
@@ -239,6 +243,20 @@ class PickPlaceStateMachine:
         self.node.get_logger().info("Step 9: Retreating...")
         retreat = self.node.make_pose((self.place_x, self.place_y, self.place_z + self.node.retreat_dist))
         return self.node.move_to_pose(retreat)
+
+    def _step10_go_home(self) -> bool:
+        """Step 10: Return to home position."""
+        self.node.get_logger().info("Step 10: Returning to home position...")
+        home = self.node.make_pose((self.node.home_x, self.node.home_y, self.node.home_z))
+        return self.node.move_to_pose(home)
+
+    def _step11_close_gripper(self) -> bool:
+        """Step 11: Close gripper."""
+        self.node.get_logger().info("Step 11: Closing gripper...")
+        success = self.node.control_gripper(-0.01)
+        # with self.lock:
+        #     self.is_grasping = True
+        return success
 
     def stop(self):
         """Request the state machine to stop."""
@@ -272,8 +290,26 @@ class PickPlaceNode(Node):
         self.declare_parameter('retreat_dist', 0.1)
         self.declare_parameter('approach_offset', 0.03)
         self.declare_parameter('max_steps', 0)
+        # Home position (Cartesian) corresponding to home joint angles [0.0, -1.0, 1.0, 0.0]
+        self.declare_parameter('home_x', 0.163)
+        self.declare_parameter('home_y', 0.0)
+        self.declare_parameter('home_z', 0.20)
+
+        # Workspace bounds (adjust for your robot configuration)
+        self.declare_parameter('workspace_z_min', 0.0)
+        self.declare_parameter('workspace_z_max', 0.6)
+        self.declare_parameter('workspace_xy_max', 0.5)
+
+        # Pose validation and retry settings
+        self.declare_parameter('enable_pose_validation', True)
+        self.declare_parameter('retry_on_planning_failure', True)
+        self.declare_parameter('max_retries', 2)
+        self.declare_parameter('relax_constraints_on_retry', True)
 
         self.approach_dist = self.get_parameter('approach_dist').value
+        self.home_x = self.get_parameter('home_x').value
+        self.home_y = self.get_parameter('home_y').value
+        self.home_z = self.get_parameter('home_z').value
         self.lift_dist = self.get_parameter('lift_dist').value
         self.grasp_depth = self.get_parameter('grasp_depth').value
         self.arm_group = self.get_parameter('arm_group_name').value
@@ -284,11 +320,22 @@ class PickPlaceNode(Node):
         self.retreat_dist = self.get_parameter('retreat_dist').value
         self.approach_offset = self.get_parameter('approach_offset').value
 
-        # max_steps: 0 means run all 9 steps
+        # Workspace bounds
+        self.workspace_z_min = self.get_parameter('workspace_z_min').value
+        self.workspace_z_max = self.get_parameter('workspace_z_max').value
+        self.workspace_xy_max = self.get_parameter('workspace_xy_max').value
+
+        # Validation & retry
+        self.enable_pose_validation = self.get_parameter('enable_pose_validation').value
+        self.retry_on_planning_failure = self.get_parameter('retry_on_planning_failure').value
+        self.max_retries = self.get_parameter('max_retries').value
+        self.relax_constraints_on_retry = self.get_parameter('relax_constraints_on_retry').value
+
+        # max_steps: 0 means run all 11 steps
         self.max_steps = self.get_parameter('max_steps').value
-        if self.max_steps <= 0 or self.max_steps > 9:
-            self.max_steps = 9
-            self.get_logger().info('max_steps not set or invalid, defaulting to all 9 steps')
+        if self.max_steps <= 0 or self.max_steps > 11:
+            self.max_steps = 11
+            self.get_logger().info('max_steps not set or invalid, defaulting to all 11 steps')
         else:
             self.get_logger().info(f'max_steps set to {self.max_steps}')
 
@@ -298,7 +345,7 @@ class PickPlaceNode(Node):
         self._gripper_action_client = ActionClient(self, GripperCommand, gripper_action)
 
         # Wait for action servers
-        self.get_logger().info("Waiting for MoveIt action server...")
+        self.get_logger().info("Waiting for MoveIt action server.False..")
         self._moveit_server_available = self._moveit_action_client.wait_for_server(timeout_sec=10.0)
         if not self._moveit_server_available:
             self.get_logger().error("MoveIt action server not available!")
@@ -475,7 +522,7 @@ class PickPlaceNode(Node):
         Control the gripper using GripperCommand action (blocking).
 
         Args:
-            position: position command (0.0=open, 1.0=closed typically)
+            position: position command in meters (0.019=open, -0.01=closed)
             max_effort: effort command for the gripper
         """
         goal = GripperCommand.Goal()
@@ -579,7 +626,7 @@ class PickPlaceNode(Node):
             # 2. Open gripper
             if self.max_steps >= 2:
                 self.get_logger().info("Step 2: Opening gripper...")
-                self.control_gripper(0.0)
+                self.control_gripper(0.019)
                 self.is_grasping = False
             else:
                 self.get_logger().info("Step 2 skipped (max_steps < 2)")
@@ -607,7 +654,7 @@ class PickPlaceNode(Node):
             # 5. Close gripper
             if self.max_steps >= 5:
                 self.get_logger().info("Step 5: Closing gripper...")
-                self.control_gripper(1.0)
+                self.control_gripper(-0.01)
                 self.is_grasping = True
             else:
                 self.get_logger().info("Step 5 skipped (max_steps < 5)")
@@ -635,7 +682,7 @@ class PickPlaceNode(Node):
             # 8. Open gripper to release
             if self.max_steps >= 8:
                 self.get_logger().info("Step 8: Releasing object...")
-                self.control_gripper(0.0)
+                self.control_gripper(0.019)
                 self.is_grasping = False
             else:
                 self.get_logger().info("Step 8 skipped (max_steps < 8)")
